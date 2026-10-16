@@ -1,15 +1,15 @@
 """
-Seta o recovery email (contact@wolfscale.com) de todos os usuarios de cada
-dominio pendente na "Mailbox Recovery Project.xlsx", logando como o admin
-de cada workspace num navegador visivel (Playwright), janela isolada por
-dominio (equivalente a aba anonima).
+Sets the recovery email (contact@wolfscale.com) for all users across each
+pending domain in "Mailbox Recovery Project.xlsx", logging in as the admin
+of each workspace in a visible browser (Playwright), with an isolated context
+per domain (equivalent to an incognito tab).
 
-Uso:
-    python recovery_email_automation.py           # processa 20 dominios (default)
-    python recovery_email_automation.py 5          # processa so 5 (bom pro primeiro teste)
+Usage:
+    python recovery_email_automation.py           # processes 20 domains (default)
+    python recovery_email_automation.py 5          # processes only 5 (good for first test)
 
-Progresso e salvo na propria planilha (coluna done) apos cada dominio,
-entao rodar de novo continua de onde parou.
+Progress is saved to the spreadsheet (done column) after each domain,
+so running again continues from where it left off.
 """
 
 import sys
@@ -40,9 +40,9 @@ PASSWORD_LOOKUP_PASSWORD_COL = 2  # B
 
 
 def build_password_lookup(wb):
-    # coluna C da aba principal e uma formula VLOOKUP pra Sheet1, e o
-    # openpyxl nao recalcula formulas (o cache do valor calculado se
-    # perde ao salvar por aqui). A fonte real e sempre a Sheet1.
+    # Column C of the main sheet is a VLOOKUP formula to Sheet1, but openpyxl
+    # does not recalculate formulas (cached values are lost when saving). The
+    # true source is always Sheet1.
     ws2 = wb[PASSWORD_LOOKUP_SHEET]
     lookup = {}
     for row in ws2.iter_rows(values_only=True):
@@ -54,9 +54,8 @@ def build_password_lookup(wb):
 
 
 def is_pending(done):
-    # a coluna done pode ser um booleano nativo do Excel (False) ou
-    # texto "FALSE" (depois que a planilha foi convertida pra texto em
-    # ingles), entao aceita as duas formas.
+    # The done column can be a native Excel boolean (False) or the string "FALSE"
+    # (after the spreadsheet was converted to English text), so accept both.
     if done is False:
         return True
     if isinstance(done, str) and done.strip().upper() == "FALSE":
@@ -94,11 +93,11 @@ def load_target_domains(wb, password_lookup):
                 admin = u
                 break
         if admin is None:
-            # nao deveria acontecer: dominios sem admin claro ja foram
-            # marcados "off" ou "find who is the admin" na planilha
+            # Should not happen: domains without a clear admin were already
+            # marked "off" or "find who is the admin" in the spreadsheet.
             continue
         if not admin["password"]:
-            print(f"  aviso: sem senha encontrada na Sheet1 para {admin['email']}, marcando {domain} e pulando")
+            print(f"  Warning: no password found in Sheet1 for {admin['email']}, marking {domain} and skipping")
             for u in users:
                 ws.cell(u["row"], COL_NOTES).value = "password not found"
             continue
@@ -107,23 +106,22 @@ def load_target_domains(wb, password_lookup):
 
 
 def wait_for_manual_checkpoint(page, reason):
-    # NEM TODA CONTA vai cair aqui. A maioria loga direto sem parar.
-    # Isso so pausa quando O GOOGLE especificamente pede algo extra
-    # (codigo de verificacao, captcha, confirmar recovery, etc) pra
-    # ESSA conta. Assim que voce resolver na janela do navegador e
-    # apertar ENTER aqui no terminal, o script CONTINUA exatamente de
-    # onde parou (nao reinicia, nao pula o dominio, nao repete passos
-    # anteriores). O input() abaixo trava o script ate voce apertar ENTER.
+    # NOT ALL ACCOUNTS will hit this. Most log in directly without pausing.
+    # This only pauses when GOOGLE specifically asks for something extra
+    # (verification code, captcha, confirm recovery, etc) for THAT account.
+    # As soon as you resolve it in the browser window and press ENTER here,
+    # the script CONTINUES exactly from where it paused (no restart, no skip,
+    # no repeat). The input() below blocks until you press ENTER.
     try:
         page.bring_to_front()
     except Exception:
         pass
-    print(f"\n>>> PAUSADO: {reason}")
-    print(">>> So acontece nas contas que o Google decide pedir verificacao extra.")
-    print(">>> NAO TEM PRESSA E NAO TEM LIMITE DE TEMPO. Pode esperar o codigo chegar")
-    print(">>> no email, demorar o quanto precisar. NAO aperte Ctrl+C, isso interrompe")
-    print(">>> o script no meio (nao cancela so essa espera). So aperte ENTER quando resolver.")
-    input(">>> Resolva na janela do navegador e pressione ENTER aqui pra continuar de onde parou...\n")
+    print(f"\n>>> PAUSED: {reason}")
+    print(">>> Only happens on accounts where Google requests extra verification.")
+    print(">>> NO RUSH and NO TIME LIMIT. Can wait for the code to arrive")
+    print(">>> in email, take as long as needed. DON'T press Ctrl+C, it interrupts")
+    print(">>> the script mid-run (doesn't cancel just this pause). Only press ENTER when done.")
+    input(">>> Resolve it in the browser window and press ENTER here to continue from where it paused...\n")
 
 
 def looks_like_verification_prompt(page):
@@ -151,28 +149,28 @@ def login_as_admin(context, admin):
     page.wait_for_timeout(2000)
 
     if looks_like_verification_prompt(page):
-        wait_for_manual_checkpoint(page, "Tela inesperada apos digitar o email (pode ser captcha/verificacao).")
+        wait_for_manual_checkpoint(page, "Unexpected screen after entering email (may be captcha/verification).")
 
     page.wait_for_selector('input[type="password"]', timeout=30000)
     page.fill('input[type="password"]', admin["password"])
     page.click("#passwordNext button")
-    print("  verificando se o Google vai pedir confirmacao extra, aguarde uns segundos (normal)...")
+    print("  Checking if Google will ask for extra confirmation, wait a few seconds (normal)...")
     page.wait_for_timeout(2500)
 
     if looks_like_verification_prompt(page):
-        wait_for_manual_checkpoint(page, "2FA / verificacao adicional detectada.")
+        wait_for_manual_checkpoint(page, "2FA / additional verification detected.")
 
-    print("  carregando o admin console, pode levar ate 20s (normal, nao e trava)...")
+    print("  Loading admin console, can take up to 20s (normal, not a freeze)...")
     try:
         page.wait_for_url("**/admin.google.com/**", timeout=20000)
     except Exception:
         wait_for_manual_checkpoint(
-            page, "Nao chegou no admin.google.com ainda. Confirme manualmente e pressione ENTER quando estiver la."
+            page, "Still not at admin.google.com. Confirm manually and press ENTER when there."
         )
 
-    # depois de logar, o Google ainda faz alguns redirecionamentos internos
-    # (rapt=..., pli=1, etc) antes de estabilizar. Da tempo pra isso acabar
-    # antes de navegar de novo, senao uma navegacao atropela a outra.
+    # After login, Google does some internal redirects (rapt=..., pli=1, etc)
+    # before stabilizing. Give it time to finish before navigating again,
+    # otherwise one navigation will interfere with another.
     try:
         page.wait_for_load_state("load", timeout=15000)
     except Exception:
@@ -196,42 +194,42 @@ def goto_with_retry(page, url, attempts=3):
 
 def goto_users_list(page):
     goto_with_retry(page, "https://admin.google.com/ac/users?hl=en")
-    # "text=Users" aparece varias vezes na tela (menu, titulo, etc), o
-    # que confunde o wait. Confirma pela URL, que e unica, em vez disso.
+    # "Users" text appears many times on the screen (menu, title, etc),
+    # which confuses the wait. Confirm by URL instead, which is unique.
     page.wait_for_url("**/ac/users**", timeout=20000)
     page.wait_for_timeout(1500)
 
 
 def set_recovery_email_for_user(page, user_email):
-    # a lista de Users ja mostra todo mundo do dominio direto na tela
-    # (dominios pequenos, poucos usuarios), entao clica direto na linha
-    # em vez de tentar buscar (a caixa de busca do topo e um "Ask me
-    # anything" de IA, nao um filtro de lista de usuarios).
+    # The Users list already shows everyone in the domain directly on screen
+    # (small domains, few users), so click directly on the row instead of
+    # trying to search (the search box at top is "Ask me anything" AI, not
+    # a user list filter).
     #
-    # varios usuarios podem ter o MESMO nome (ex: "Joe Davy" nas 3
-    # variantes de banzaibrand.com), entao nao da pra clicar por nome.
-    # em vez disso, acha a LINHA da tabela que contem o email exato, e
-    # dentro dela clica no link real (<a href="./ac/users/{id}">).
+    # Multiple users can have the SAME name (e.g., "Joe Davy" in 3 variants
+    # of banzaibrand.com), so can't click by name. Instead, find the TABLE ROW
+    # containing the exact email, then click the real link inside it
+    # (<a href="./ac/users/{id}">).
     row = page.locator("tr", has_text=user_email)
     row.locator('a[href*="/ac/users/"]').first.click()
     page.wait_for_timeout(2000)
 
-    # a palavra "Security" tambem existe no menu lateral (configuracoes
-    # gerais da organizacao), entao get_by_text pegaria os dois. Usa role
-    # "tab" pra pegar so a aba dentro do painel do usuario.
+    # "Security" also exists in the sidebar menu (org-wide settings), so
+    # get_by_text would get both. Use role="tab" to get only the tab
+    # within the user's panel.
     try:
         page.get_by_role("tab", name="Security", exact=True).click()
     except Exception:
         page.get_by_text("Security", exact=True).last.click()
     page.wait_for_timeout(1500)
 
-    # "Recovery information" mostra "Add a recovery email" como um link
-    # (nao um campo pronto), so vira campo de texto depois de clicar nele.
+    # "Recovery information" shows "Add a recovery email" as a link (not a
+    # ready field), it becomes a text field only after clicking it.
     page.get_by_text("Add a recovery email", exact=True).first.click()
     page.wait_for_timeout(1000)
 
-    # o modal tem 2 campos (Email e Phone), tem que mirar especificamente
-    # no de Email, senao o texto vai pro campo errado (Phone).
+    # The modal has 2 fields (Email and Phone), must target Email specifically,
+    # otherwise text goes to the wrong field (Phone).
     recovery_field = page.get_by_role("textbox", name="Email", exact=False).first
     recovery_field.click()
     recovery_field.fill(RECOVERY_EMAIL)
@@ -239,7 +237,7 @@ def set_recovery_email_for_user(page, user_email):
     page.get_by_role("button", name="Save").first.click()
     page.wait_for_timeout(1500)
 
-    # volta pra lista de usuarios pra processar o proximo
+    # Return to user list to process next user
     goto_users_list(page)
 
 
@@ -249,7 +247,7 @@ DEBUG_DIR = Path(__file__).resolve().parent / "debug_screenshots"
 def process_domain(browser, entry, wb):
     domain = entry["domain"]
     admin = entry["admin"]
-    print(f"\n--- {domain} (admin: {admin['email']}, {len(entry['users'])} usuario(s)) ---")
+    print(f"\n--- {domain} (admin: {admin['email']}, {len(entry['users'])} user(s)) ---")
 
     context = browser.new_context()
     page = None
@@ -263,10 +261,9 @@ def process_domain(browser, entry, wb):
             wb[SHEET_NAME].cell(u["row"], COL_DONE).value = "TRUE"
         return True, None
     except Exception as e:
-        print(f"  ERRO: {e}")
-        # notes NAO e marcado aqui de proposito: assim o dominio fica
-        # elegivel pra tentar de novo no proximo run sem precisar limpar
-        # nada manualmente. Falhas ficam registradas so no log abaixo.
+        print(f"  ERROR: {e}")
+        # Notes intentionally NOT marked here: domain stays eligible to retry
+        # in the next run without manual cleanup. Failures logged to file below.
         with open(FAILURES_LOG, "a", encoding="utf-8") as f:
             f.write(f"{domain} | admin={admin['email']} | {e}\n")
         if page is not None:
@@ -275,9 +272,9 @@ def process_domain(browser, entry, wb):
             try:
                 page.screenshot(path=str(DEBUG_DIR / f"{safe_name}.png"), full_page=True)
                 (DEBUG_DIR / f"{safe_name}.html").write_text(page.content(), encoding="utf-8")
-                print(f"  screenshot salva em debug_screenshots/{safe_name}.png")
+                print(f"  screenshot saved to debug_screenshots/{safe_name}.png")
             except Exception as screenshot_error:
-                print(f"  (nao consegui salvar screenshot: {screenshot_error})")
+                print(f"  (couldn't save screenshot: {screenshot_error})")
         return False, str(e)
     finally:
         context.close()
@@ -285,7 +282,7 @@ def process_domain(browser, entry, wb):
 
 def main():
     if LOCK_PATH.exists():
-        print(f"O arquivo '{XLSX_PATH.name}' esta aberto no Excel. Feche e rode de novo.")
+        print(f"The file '{XLSX_PATH.name}' is open in Excel. Close it and run again.")
         sys.exit(1)
 
     batch_size = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_BATCH_SIZE
@@ -293,11 +290,11 @@ def main():
     wb = openpyxl.load_workbook(XLSX_PATH, data_only=False)
     password_lookup = build_password_lookup(wb)
     domains = load_target_domains(wb, password_lookup)
-    wb.save(XLSX_PATH)  # persiste os "password not found" marcados agora
+    wb.save(XLSX_PATH)  # persist "password not found" marks now
     batch = domains[:batch_size]
 
-    print(f"Dominios pendentes no total: {len(domains)}")
-    print(f"Processando {len(batch)} agora (batch_size={batch_size})\n")
+    print(f"Total pending domains: {len(domains)}")
+    print(f"Processing {len(batch)} now (batch_size={batch_size})\n")
 
     results = []
     with sync_playwright() as p:
@@ -308,16 +305,16 @@ def main():
             wb.save(XLSX_PATH)
         browser.close()
 
-    sucesso = sum(1 for _, ok, _ in results if ok)
-    falha = len(results) - sucesso
+    success = sum(1 for _, ok, _ in results if ok)
+    failed = len(results) - success
 
-    print("\n=== Resumo do batch ===")
+    print("\n=== Batch Summary ===")
     for domain, ok, err in results:
-        status = "OK" if ok else f"FALHOU: {err}"
+        status = "OK" if ok else f"FAILED: {err}"
         print(f"  {domain}: {status}")
 
-    print(f"\n{sucesso} concluido(s) com sucesso, {falha} falhou(aram) neste batch.")
-    print(f"Dominios ainda pendentes no total (incluindo falhas, tentaveis de novo): {len(domains) - sucesso}")
+    print(f"\n{success} completed successfully, {failed} failed in this batch.")
+    print(f"Total pending domains still (including failures, retryable): {len(domains) - success}")
 
 
 if __name__ == "__main__":
